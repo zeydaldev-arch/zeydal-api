@@ -3,16 +3,16 @@
 
 /**
  * ZEYDAL AI – API CORE
- * Version: 2.0.0
+ * Version: 3.0.0
  * Project: ZEYDRION FORGE ENTERTAINMENT
- * AI Provider: OpenAI
+ * AI Provider: Google Gemini
  */
 
 const CONFIG = {
   name: "ZEYDAL AI",
-  version: "2.0.0",
+  version: "3.0.0",
   environment: "production",
-  defaultModel: "gpt-4.1-mini",
+  defaultModel: "gemini-3.8-flash",
   maxMessageLength: 12000,
   maxHistory: 12
 };
@@ -38,74 +38,59 @@ function jsonResponse(data, status = 200) {
   });
 }
 
-// Extract text from OpenAI Responses API output
+// Gemini response text extraction
 function extractOutputText(data) {
-  const results = [];
+  const parts = data.candidates?.[0]?.content?.parts || [];
 
-  for (const item of data.output || []) {
-    if (item.type !== "message") continue;
-
-    for (const content of item.content || []) {
-      if (content.type === "output_text") {
-        results.push(content.text);
-      }
-    }
-  }
-
-  return results.join("\n").trim();
+  return parts
+    .filter(part => typeof part.text === "string")
+    .map(part => part.text)
+    .join("\n")
+    .trim();
 }
 
-// OpenAI connection
-async function openAIChat(body, env) {
-  if (!env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is not configured.");
+// Gemini connection
+async function geminiChat(body, env) {
+  if (!env.GEMINI_API_KEY) {
+    throw new Error("GEMINI_API_KEY is not configured.");
   }
 
-  let input = [];
+  let messages = [];
 
-  // Support conversation history
   if (Array.isArray(body.messages)) {
-    input = body.messages
+    messages = body.messages
       .filter(item =>
         item &&
         ["user", "assistant"].includes(item.role) &&
-        typeof item.content === "string"
+        typeof item.content === "string" &&
+        item.content.trim()
       )
-      .slice(-CONFIG.maxHistory)
-      .map(item => ({
-        role: item.role,
-        content: item.content.slice(0, 6000)
-      }));
-  }
-
-  // Support simple message requests
-  else if (
+      .slice(-CONFIG.maxHistory);
+  } else if (
     typeof body.message === "string" &&
     body.message.trim()
   ) {
-    input = [{
+    messages = [{
       role: "user",
       content: body.message.trim()
     }];
   }
 
-  if (input.length === 0) {
+  if (messages.length === 0) {
     return {
       error: "A valid message is required.",
       status: 400
     };
   }
 
-  const lastMessage = input[input.length - 1];
-
-  if (lastMessage.role !== "user") {
+  if (messages[messages.length - 1].role !== "user") {
     return {
       error: "The last message must be from the user.",
       status: 400
     };
   }
 
-  const totalLength = input.reduce(
+  const totalLength = messages.reduce(
     (total, item) => total + item.content.length,
     0
   );
@@ -117,22 +102,38 @@ async function openAIChat(body, env) {
     };
   }
 
+  // Convert assistant role to Gemini model role
+  const contents = messages.map(item => ({
+    role: item.role === "assistant" ? "model" : "user",
+    parts: [{
+      text: item.content.slice(0, 6000)
+    }]
+  }));
+
+  const model = env.GEMINI_MODEL || CONFIG.defaultModel;
+
   const response = await fetch(
-    "https://api.openai.com/v1/responses",
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
     {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "x-goog-api-key": env.GEMINI_API_KEY
       },
       body: JSON.stringify({
-        model: env.OPENAI_MODEL || CONFIG.defaultModel,
-        instructions:
-          "You are ZEYDAL AI, an intelligent AI assistant. " +
-          "Respond helpfully, accurately and naturally. " +
-          "Use the user's language when possible.",
-        input,
-        max_output_tokens: 700
+        systemInstruction: {
+          parts: [{
+            text:
+              "You are ZEYDAL AI, an intelligent AI assistant. " +
+              "Respond helpfully, accurately and naturally. " +
+              "Use the user's language when possible."
+          }]
+        },
+        contents,
+        generationConfig: {
+          maxOutputTokens: 700,
+          temperature: 0.7
+        }
       })
     }
   );
@@ -140,7 +141,11 @@ async function openAIChat(body, env) {
   const data = await response.json();
 
   if (!response.ok) {
-    console.error("OpenAI API error:", data.error?.code);
+    console.error(
+      "Gemini API error:",
+      response.status,
+      data.error?.status || "UNKNOWN"
+    );
 
     return {
       error: "AI service request failed.",
@@ -160,7 +165,8 @@ async function openAIChat(body, env) {
   return {
     success: true,
     system: CONFIG.name,
-    model: data.model || CONFIG.defaultModel,
+    version: CONFIG.version,
+    model,
     response: answer,
     ai_connected: true
   };
@@ -188,7 +194,7 @@ async function handleRequest(request, env) {
       system: CONFIG.name,
       version: CONFIG.version,
       status: "online",
-      provider: "OpenAI",
+      provider: "Google Gemini",
       timestamp: new Date().toISOString()
     });
   }
@@ -201,7 +207,7 @@ async function handleRequest(request, env) {
     return jsonResponse({
       name: CONFIG.name,
       version: CONFIG.version,
-      provider: "OpenAI",
+      provider: "Google Gemini",
       endpoints: [
         "GET /api",
         "GET /api/status",
@@ -227,7 +233,7 @@ async function handleRequest(request, env) {
     }
 
     try {
-      const result = await openAIChat(body, env);
+      const result = await geminiChat(body, env);
 
       if (result.error) {
         return jsonResponse({
