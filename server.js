@@ -12,7 +12,7 @@ const CONFIG = {
   name: "ZEYDAL AI",
   version: "3.0.0",
   environment: "production",
-  defaultModel: "gemini-3.8-flash",
+  defaultModel: "gemini-3.5-flash-lite",
   maxMessageLength: 12000,
   maxHistory: 12
 };
