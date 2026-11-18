@@ -1,1 +1,8 @@
 
+name = "zeydal-api"
+main = "server.js"
+compatibility_date = "2026-11-18"
+
+[observability]
+enabled = true
+
